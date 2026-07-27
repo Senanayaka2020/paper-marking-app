@@ -36,6 +36,29 @@ def get_user_credits(user_id):
 def deduct_credit(user_id, current_credits):
     supabase.table("profiles").update({"credits": current_credits - 1}).eq("id", user_id).execute()
 
+# --- FALLBACK GEMINI GENERATION FUNCTION ---
+def generate_content_with_fallback(client, contents):
+    """
+    Tries gemini-2.5-flash first. If 503 or server error occurs,
+    automatically falls back to alternative models.
+    """
+    models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    last_exception = None
+
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents
+            )
+            return response
+        except Exception as e:
+            last_exception = e
+            # Log/continue to next fallback model
+            continue
+    
+    raise last_exception
+
 # --- LOGIN / SIGNUP SIDEBAR ---
 st.sidebar.title("👤 User Account")
 
@@ -72,7 +95,7 @@ else:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("💳 Buy More Credits")
-    st.sidebar.write("රු. 1,000/= (Credits 1000)")
+    st.sidebar.write("රු. 1,000/= (Credits 100)")
     
     PAYHERE_MERCHANT_ID = st.secrets.get("PAYHERE_MERCHANT_ID", "123456")
     payhere_url = f"https://www.payhere.lk/pay/checkout?merchant_id={PAYHERE_MERCHANT_ID}&items=Paper+Marking+100+Credits&amount=1000&currency=LKR&custom_1={user_id}"
@@ -159,10 +182,8 @@ else:
                     prompt += "Provide question breakdown, total score, and detailed Sinhala/English feedback."
                     contents.append(prompt)
 
-                    response = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=contents
-                    )
+                    # Generating response using automatic model fallback
+                    response = generate_content_with_fallback(client, contents)
 
                     # Store result persistently
                     st.session_state.evaluation_result = response.text
