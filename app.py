@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import google.genai as genai
+import urllib.parse
 from PIL import Image
 from supabase import create_client, Client
 
@@ -78,6 +79,31 @@ else:
     
     st.sidebar.markdown(f"[👉 Pay via PayHere (Card / eZ Cash)]({payhere_url})", unsafe_allow_html=True)
 
+    # --- WHATSAPP RECEIPT BUTTON ---
+    whatsapp_number = "94712382306"
+    whatsapp_msg = f"Hello! I made a payment for AI Paper Marker Credits.\n\nUser Email: {user_email}\nUser ID: {user_id}\n\nPlease find my attached payment receipt/slip."
+    encoded_msg = urllib.parse.quote(whatsapp_msg)
+    whatsapp_url = f"https://wa.me/{whatsapp_number}?text={encoded_msg}"
+
+    st.sidebar.markdown(
+        f'''
+        <a href="{whatsapp_url}" target="_blank" style="text-decoration: none;">
+            <div style="
+                background-color: #25D366;
+                color: white;
+                padding: 10px;
+                border-radius: 8px;
+                text-align: center;
+                font-weight: bold;
+                margin-top: 10px;
+                margin-bottom: 10px;">
+                💬 WhatsApp හරහා Slip එක එවන්න
+            </div>
+        </a>
+        ''',
+        unsafe_allow_html=True
+    )
+
     if st.sidebar.button("Logout"):
         st.session_state.user = None
         st.session_state.evaluation_result = None
@@ -138,7 +164,7 @@ else:
                         contents=contents
                     )
 
-                    # Store result in session state so it doesn't vanish on rerun
+                    # Store result persistently
                     st.session_state.evaluation_result = response.text
 
                     # Deduct credit
