@@ -72,7 +72,7 @@ else:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("💳 Buy More Credits")
-    st.sidebar.write("රු. 1,000/= (Credits 100)")
+    st.sidebar.write("රු. 1,000/= (Credits 1000)")
     
     PAYHERE_MERCHANT_ID = st.secrets.get("PAYHERE_MERCHANT_ID", "123456")
     payhere_url = f"https://www.payhere.lk/pay/checkout?merchant_id={PAYHERE_MERCHANT_ID}&items=Paper+Marking+100+Credits&amount=1000&currency=LKR&custom_1={user_id}"
