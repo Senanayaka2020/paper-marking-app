@@ -1,7 +1,8 @@
 import os
+import time
+import urllib.parse
 import streamlit as st
 import google.genai as genai
-import urllib.parse
 from PIL import Image
 from pypdf import PdfReader
 from supabase import create_client, Client
@@ -51,21 +52,28 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"PDF කියවීමේ දෝෂයක්: {str(e)}")
         return ""
 
-# --- FALLBACK GEMINI GENERATION FUNCTION ---
+# --- SAFE & STABLE GEMINI GENERATION FUNCTION ---
 def generate_content_with_fallback(client, contents):
-    models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    """
+    Uses only verified working model identifiers for google-genai SDK.
+    Retries automatically if the server experiences temporary 503 overload.
+    """
+    valid_models = ['gemini-2.5-flash', 'gemini-2.0-flash']
     last_exception = None
 
-    for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents
-            )
-            return response
-        except Exception as e:
-            last_exception = e
-            continue
+    for model_name in valid_models:
+        # Try up to 2 times per model with delay for temporary 503 errors
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents
+                )
+                return response
+            except Exception as e:
+                last_exception = e
+                time.sleep(2)  # Wait 2 seconds before retrying
+                continue
     
     raise last_exception
 
@@ -228,7 +236,7 @@ Provide:
 3. Detailed feedback in Sinhala & English.
 """
 
-                    # 1. Attach Marking Scheme to contents
+                    # 1. Attach Marking Scheme
                     if scheme_file:
                         if scheme_file.type == "application/pdf":
                             prompt += f"\nCorrect Marking Scheme Extracted from PDF:\n{pdf_extracted_text}\n"
