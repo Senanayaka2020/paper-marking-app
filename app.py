@@ -2,102 +2,144 @@ import os
 import streamlit as st
 import google.genai as genai
 from PIL import Image
+from supabase import create_client, Client
 
-st.set_page_config(page_title="AI Paper Marker", page_icon="📝", layout="wide")
-st.title("📝 School AI Paper Marking Platform")
-st.write("ශිෂ්‍ය පිළිතුරු පත්‍රය සහ Marking Scheme එක Image/Photo ලෙස upload කර AI මගින් ඇගයීම සිදුකරන්න.")
+st.set_page_config(page_title="AI Paper Marker Pro", page_icon="📝", layout="wide")
 
-# Retrieve API Key securely from Streamlit secrets
-api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+# 1. Setup Supabase & Gemini Credentials from Secrets
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY"))
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
 
-if not api_key:
-    st.error("GEMINI_API_KEY එක සෙට් කර නොමැත. Secrets වලට එකතු කරන්න.")
+if not SUPABASE_URL or not SUPABASE_KEY or not GEMINI_API_KEY:
+    st.error("Secrets (SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY) සෙට් කර නොමැත.")
     st.stop()
 
-client = genai.Client(api_key=api_key)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-col1, col2 = st.columns(2)
+# 2. Authentication UI Session Management
+if "user" not in st.session_state:
+    st.session_state.user = None
 
-with col1:
-    st.subheader("1. Student Answer Sheet")
-    student_file = st.file_uploader(
-        "Upload Student Answer Sheet (JPG/PNG)", 
-        type=["jpg", "jpeg", "png"],
-        key="student"
-    )
-    if student_file:
-        st.image(student_file, caption="Student Answer Sheet", use_container_width=True)
+def get_user_credits(user_id):
+    try:
+        res = supabase.table("profiles").select("credits").eq("id", user_id).single().execute()
+        return res.data["credits"] if res.data else 0
+    except Exception:
+        return 0
 
-with col2:
-    st.subheader("2. Marking Scheme / Answer Key")
-    # Marking scheme upload as Image or Text option
-    scheme_file = st.file_uploader(
-        "Upload Marking Scheme Image (JPG/PNG)", 
-        type=["jpg", "jpeg", "png"],
-        key="scheme"
-    )
-    if scheme_file:
-        st.image(scheme_file, caption="Marking Scheme Image", use_container_width=True)
-    
-    scheme_text = st.text_area(
-        "Or Type/Paste Marking Scheme (Optional if image uploaded)", 
-        height=100
-    )
+def deduct_credit(user_id, current_credits):
+    supabase.table("profiles").update({"credits": current_credits - 1}).eq("id", user_id).execute()
 
-max_marks = st.number_input("Total Maximum Marks", value=100)
+# --- LOGIN / SIGNUP SIDEBAR ---
+st.sidebar.title("👤 User Account")
 
-if st.button("Evaluate & Mark Paper", type="primary", use_container_width=True):
-    if not student_file:
-        st.warning("කරුණාකර ශිෂ්‍ය පිළිතුරු පත්‍රයේ Photo එකක් Upload කරන්න.")
-    elif not scheme_file and not scheme_text:
-        st.warning("කරුණාකර Marking Scheme එක Image එකක් ලෙස Upload කරන්න හෝ Text ලෙස ඇතුළත් කරන්න.")
-    else:
-        with st.spinner("AI මගින් පත්‍ර දෙකම විශ්ලේෂණය කරමින් පවතී..."):
+if not st.session_state.user:
+    auth_mode = st.sidebar.radio("Action", ["Login", "Sign Up"])
+    email = st.sidebar.text_input("Email")
+    password = st.sidebar.text_input("Password", type="password")
+
+    if auth_mode == "Sign Up":
+        if st.sidebar.button("Create Account"):
             try:
-                # Prepare inputs for Gemini
-                student_img = Image.open(student_file)
-                contents = [student_img]
-
-                prompt = f"""
-                You are an expert school exam paper evaluator.
-                Analyze the provided student answer sheet image against the given marking scheme.
-                
-                ### Maximum Marks for Paper: {max_marks}
-
-                """
-
-                if scheme_file:
-                    scheme_img = Image.open(scheme_file)
-                    contents.append(scheme_img)
-                    prompt += "\nNote: I have attached the Marking Scheme as an image as well. Compare the student's answer image with the marking scheme image."
-                
-                if scheme_text:
-                    prompt += f"\nAdditional Marking Rules/Scheme Text:\n{scheme_text}"
-
-                prompt += """
-                ### Evaluation Tasks:
-                1. Evaluate each question step-by-step.
-                2. Point out specific errors, missing steps, or misconceptions.
-                3. Award marks based on the scheme.
-                4. Provide constructive feedback in clear Sinhala or English (suited for Sri Lankan students).
-
-                ### Output Format:
-                - **Question Breakdown**: (Marks per question)
-                - **Total Score**: X / {max_marks}
-                - **Key Feedback & Corrections**:
-                """
-
-                contents.append(prompt)
-
-                # Call Gemini API
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=contents
-                )
-
-                st.markdown("---")
-                st.markdown("### 📊 Evaluation Result & Feedback")
-                st.markdown(response.text)
-
+                res = supabase.auth.sign_up({"email": email, "password": password})
+                st.sidebar.success("Account එක සාර්ථකව සෑදුවා! දැන් Login වන්න.")
             except Exception as e:
-                st.error(f"Error during evaluation: {str(e)}")
+                st.sidebar.error(f"Error: {e}")
+
+    elif auth_mode == "Login":
+        if st.sidebar.button("Login"):
+            try:
+                res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                st.session_state.user = res.user
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error("Login අසාර්ථකයි. Email/Password පරීක්ෂා කරන්න.")
+
+else:
+    user_id = st.session_state.user.id
+    user_email = st.session_state.user.email
+    credits = get_user_credits(user_id)
+
+    st.sidebar.write(f"Logged in as: **{user_email}**")
+    st.sidebar.metric(label="Remaining Marking Credits", value=credits)
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💳 Buy More Credits")
+    st.sidebar.write("රු. 1,000/= (Credits 100)")
+    
+    PAYHERE_MERCHANT_ID = st.secrets.get("PAYHERE_MERCHANT_ID", "123456")
+    payhere_url = f"https://www.payhere.lk/pay/checkout?merchant_id={PAYHERE_MERCHANT_ID}&items=Paper+Marking+100+Credits&amount=1000&currency=LKR&custom_1={user_id}"
+    
+    st.sidebar.markdown(f"[👉 Pay via PayHere (Card / eZ Cash)]({payhere_url})", unsafe_allow_html=True)
+
+    if st.sidebar.button("Logout"):
+        st.session_state.user = None
+        st.rerun()
+
+# --- MAIN APPLICATION ---
+st.title("📝 School AI Paper Marking Platform")
+
+if not st.session_state.user:
+    st.info("👋 Platform එක භාවිත කිරීමට කරුණාකර Sidebar එකෙන් Login වන්න හෝ නොමිලේ Account එකක් සාදාගන්න (Free 5 Credits ලැබෙනු ඇත).")
+else:
+    user_id = st.session_state.user.id
+    credits = get_user_credits(user_id)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("1. Student Answer Sheet")
+        student_file = st.file_uploader("Upload Student Answer Sheet", type=["jpg", "jpeg", "png"], key="student")
+        if student_file:
+            st.image(student_file, use_container_width=True)
+
+    with col2:
+        st.subheader("2. Marking Scheme")
+        scheme_file = st.file_uploader("Upload Marking Scheme Image", type=["jpg", "jpeg", "png"], key="scheme")
+        if scheme_file:
+            st.image(scheme_file, use_container_width=True)
+        scheme_text = st.text_area("Or Type Marking Scheme", height=100)
+
+    max_marks = st.number_input("Total Maximum Marks", value=100)
+
+    if st.button("Evaluate & Mark Paper (Uses 1 Credit)", type="primary", use_container_width=True):
+        if credits <= 0:
+            st.error("⚠️ ඔබගේ Credits ඉවර වී ඇත. කරුණාකර Sidebar එකෙන් Credits Buy කරන්න.")
+        elif not student_file:
+            st.warning("කරුණාකර ශිෂ්‍ය පිළිතුරු පත්‍රයේ Photo එකක් Upload කරන්න.")
+        elif not scheme_file and not scheme_text:
+            st.warning("කරුණාකර Marking Scheme එක ඇතුළත් කරන්න.")
+        else:
+            with st.spinner("AI මගින් පත්‍රය විශ්ලේෂණය කරමින් පවතී..."):
+                try:
+                    student_img = Image.open(student_file)
+                    contents = [student_img]
+
+                    prompt = f"Evaluate this student answer sheet against the marking scheme. Maximum Marks: {max_marks}\n"
+
+                    if scheme_file:
+                        contents.append(Image.open(scheme_file))
+                        prompt += "Attached is the marking scheme image.\n"
+                    if scheme_text:
+                        prompt += f"Marking Rules: {scheme_text}\n"
+
+                    prompt += "Provide question breakdown, total score, and detailed Sinhala/English feedback."
+                    contents.append(prompt)
+
+                    response = client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=contents
+                    )
+
+                    # Deduct 1 credit upon success
+                    deduct_credit(user_id, credits)
+
+                    st.success("Paper Evaluation Completed!")
+                    st.markdown("### 📊 Evaluation Result & Feedback")
+                    st.markdown(response.text)
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
