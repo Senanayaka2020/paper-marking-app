@@ -54,7 +54,6 @@ def generate_content_with_fallback(client, contents):
             return response
         except Exception as e:
             last_exception = e
-            # Log/continue to next fallback model
             continue
     
     raise last_exception
@@ -95,7 +94,7 @@ else:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("💳 Buy More Credits")
-    st.sidebar.write("රු. 1,000/= (Credits 1000)")
+    st.sidebar.write("රු. 1,000/= (Credits 100)")
     
     PAYHERE_MERCHANT_ID = st.secrets.get("PAYHERE_MERCHANT_ID", "123456")
     payhere_url = f"https://www.payhere.lk/pay/checkout?merchant_id={PAYHERE_MERCHANT_ID}&items=Paper+Marking+100+Credits&amount=1000&currency=LKR&custom_1={user_id}"
@@ -143,43 +142,48 @@ else:
 
     col1, col2 = st.columns(2)
 
+    # Column 1: Marking Scheme First
     with col1:
-        st.subheader("1. Student Answer Sheet")
-        student_file = st.file_uploader("Upload Student Answer Sheet", type=["jpg", "jpeg", "png"], key="student")
-        if student_file:
-            st.image(student_file, use_container_width=True)
-
-    with col2:
-        st.subheader("2. Marking Scheme")
+        st.subheader("1. Marking Scheme")
         scheme_file = st.file_uploader("Upload Marking Scheme Image", type=["jpg", "jpeg", "png"], key="scheme")
         if scheme_file:
             st.image(scheme_file, use_container_width=True)
-        scheme_text = st.text_area("Or Type Marking Scheme", height=100)
+        scheme_text = st.text_area("Or Type Marking Scheme Rules", height=100, placeholder="Enter marking rules or key answers here...")
+
+    # Column 2: Student Answer Sheet Second
+    with col2:
+        st.subheader("2. Student Answer Sheet")
+        student_file = st.file_uploader("Upload Student Answer Sheet", type=["jpg", "jpeg", "png"], key="student")
+        if student_file:
+            st.image(student_file, use_container_width=True)
 
     max_marks = st.number_input("Total Maximum Marks", value=100)
 
     if st.button("Evaluate & Mark Paper (Uses 1 Credit)", type="primary", use_container_width=True):
         if credits <= 0:
             st.error("⚠️ ඔබගේ Credits ඉවර වී ඇත. කරුණාකර Sidebar එකෙන් Credits Buy කරන්න.")
+        elif not scheme_file and not scheme_text:
+            st.warning("කරුණාකර Marking Scheme එක ඇතුළත් කරන්න (Photo එකක් Upload කරන්න හෝ Text ලියන්න).")
         elif not student_file:
             st.warning("කරුණාකර ශිෂ්‍ය පිළිතුරු පත්‍රයේ Photo එකක් Upload කරන්න.")
-        elif not scheme_file and not scheme_text:
-            st.warning("කරුණාකර Marking Scheme එක ඇතුළත් කරන්න.")
         else:
             with st.spinner("AI මගින් පත්‍රය විශ්ලේෂණය කරමින් පවතී..."):
                 try:
-                    student_img = Image.open(student_file)
-                    contents = [student_img]
+                    contents = []
+                    prompt = f"Evaluate this student answer sheet against the provided marking scheme. Maximum Marks: {max_marks}\n"
 
-                    prompt = f"Evaluate this student answer sheet against the marking scheme. Maximum Marks: {max_marks}\n"
-
+                    # Adding Marking Scheme first to AI context
                     if scheme_file:
                         contents.append(Image.open(scheme_file))
                         prompt += "Attached is the marking scheme image.\n"
                     if scheme_text:
                         prompt += f"Marking Rules: {scheme_text}\n"
 
-                    prompt += "Provide question breakdown, total score, and detailed Sinhala/English feedback."
+                    # Adding Student Answer Sheet
+                    student_img = Image.open(student_file)
+                    contents.append(student_img)
+
+                    prompt += "Provide question-by-question breakdown, total score, and detailed Sinhala/English feedback."
                     contents.append(prompt)
 
                     # Generating response using automatic model fallback
