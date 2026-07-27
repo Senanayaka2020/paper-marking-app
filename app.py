@@ -5,7 +5,7 @@ import urllib.parse
 from PIL import Image
 from supabase import create_client, Client
 
-st.set_page_config(page_title="AI Paper Marker Pro", page_icon="📝", layout="wide")
+st.set_page_config(page_title="AI Paper Marker Pro & MCQ Evaluator", page_icon="📝", layout="wide")
 
 # 1. Setup Supabase & Gemini Credentials from Secrets
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
@@ -38,10 +38,6 @@ def deduct_credit(user_id, current_credits):
 
 # --- FALLBACK GEMINI GENERATION FUNCTION ---
 def generate_content_with_fallback(client, contents):
-    """
-    Tries gemini-2.5-flash first. If 503 or server error occurs,
-    automatically falls back to alternative models.
-    """
     models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
     last_exception = None
 
@@ -103,26 +99,12 @@ else:
 
     # --- WHATSAPP RECEIPT BUTTON ---
     whatsapp_number = "94712382306"
-    whatsapp_msg = f"Hello! I made a payment for AI Paper Marker Credits.\n\nUser Email: {user_email}\nUser ID: {user_id}\n\nPlease find my attached payment receipt/slip."
+    whatsapp_msg = f"Hello! I made a payment for AI Paper Marker Credits.\nUser Email: {user_email}\nUser ID: {user_id}\nPlease find my attached payment receipt/slip."
     encoded_msg = urllib.parse.quote(whatsapp_msg)
     whatsapp_url = f"https://wa.me/{whatsapp_number}?text={encoded_msg}"
 
     st.sidebar.markdown(
-        f'''
-        <a href="{whatsapp_url}" target="_blank" style="text-decoration: none;">
-            <div style="
-                background-color: #25D366;
-                color: white;
-                padding: 10px;
-                border-radius: 8px;
-                text-align: center;
-                font-weight: bold;
-                margin-top: 10px;
-                margin-bottom: 10px;">
-                💬 WhatsApp හරහා Slip එක එවන්න
-            </div>
-        </a>
-        ''',
+        f'<a href="{whatsapp_url}" target="_blank" style="text-decoration: none;"><div style="background-color: #25D366; color: white; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; margin-top: 10px; margin-bottom: 10px;">💬 WhatsApp හරහා Slip එක එවන්න</div></a>',
         unsafe_allow_html=True
     )
 
@@ -132,7 +114,7 @@ else:
         st.rerun()
 
 # --- MAIN APPLICATION ---
-st.title("📝 School AI Paper Marking Platform")
+st.title("📝 School AI Paper Marking & MCQ Evaluator")
 
 if not st.session_state.user:
     st.info("👋 Platform එක භාවිත කිරීමට කරුණාකර Sidebar එකෙන් Login වන්න හෝ නොමිලේ Account එකක් සාදාගන්න (Free 5 Credits ලැබෙනු ඇත).")
@@ -140,24 +122,32 @@ else:
     user_id = st.session_state.user.id
     credits = get_user_credits(user_id)
 
+    paper_type = st.radio("📄 Select Paper Mode:", ["MCQ Answer Sheet (OMR / Multi-choice)", "Essay / Structured Essay Paper"], horizontal=True)
+
     col1, col2 = st.columns(2)
 
-    # Column 1: Marking Scheme First
     with col1:
-        st.subheader("1. Marking Scheme")
+        st.subheader("1. Marking Scheme / Key Answers")
         scheme_file = st.file_uploader("Upload Marking Scheme Image", type=["jpg", "jpeg", "png"], key="scheme")
         if scheme_file:
             st.image(scheme_file, use_container_width=True)
-        scheme_text = st.text_area("Or Type Marking Scheme Rules", height=100, placeholder="Enter marking rules or key answers here...")
+        scheme_text = st.text_area(
+            "Or Type Correct Answers (e.g., 1-2, 2-4, 3-1 or 1-A, 2-C)", 
+            height=120, 
+            placeholder="MCQ Key Example:\n1 - (2)\n2 - (4)\n3 - (1)\n4 - (3)"
+        )
 
-    # Column 2: Student Answer Sheet Second
     with col2:
         st.subheader("2. Student Answer Sheet")
-        student_file = st.file_uploader("Upload Student Answer Sheet", type=["jpg", "jpeg", "png"], key="student")
+        student_file = st.file_uploader("Upload Student Answer Sheet (Image / OMR)", type=["jpg", "jpeg", "png"], key="student")
         if student_file:
             st.image(student_file, use_container_width=True)
 
-    max_marks = st.number_input("Total Maximum Marks", value=100)
+    col_marks, col_per = st.columns(2)
+    with col_marks:
+        max_marks = st.number_input("Total Maximum Marks", value=50 if paper_type.startswith("MCQ") else 100)
+    with col_per:
+        marks_per_correct = st.number_input("Marks Per Correct Question", value=1, min_value=1) if paper_type.startswith("MCQ") else 1
 
     if st.button("Evaluate & Mark Paper (Uses 1 Credit)", type="primary", use_container_width=True):
         if credits <= 0:
@@ -167,39 +157,77 @@ else:
         elif not student_file:
             st.warning("කරුණාකර ශිෂ්‍ය පිළිතුරු පත්‍රයේ Photo එකක් Upload කරන්න.")
         else:
-            with st.spinner("AI මගින් පත්‍රය විශ්ලේෂණය කරමින් පවතී..."):
+            with st.spinner("AI Vision Model එක මගින් පිළිතුරු පත්‍රය පරීක්ෂා කරමින් පවතී..."):
                 try:
                     contents = []
-                    prompt = f"Evaluate this student answer sheet against the provided marking scheme. Maximum Marks: {max_marks}\n"
+                    
+                    if paper_type.startswith("MCQ"):
+                        prompt = f"""
+You are an expert Vision AI OMR and MCQ Answer Sheet Evaluator.
+Perform a high-precision spatial and visual inspection of the uploaded student sheet against the correct answer scheme.
 
-                    # Adding Marking Scheme first to AI context
+Evaluation Directives:
+1. Extract and identify every question number on the student sheet and read the selected/marked answer (e.g., option 1, 2, 3, 4, 5 OR A, B, C, D, E or marked bubbles/crosses/circles/handwritten numbers).
+2. Compare each detected student answer against the provided Correct Marking Scheme / Key.
+3. Total Maximum Marks possible: {max_marks}. Marks allocated per correct answer: {marks_per_correct}.
+4. Carefully inspect faint markings, circled choices, crossed options, or double markings (if double marked, mark as incorrect).
+
+Formatting Output (Strictly format in Markdown with clear Sinhala & English section headings):
+
+## 📊 MCQ Evaluation Summary
+* **Total Questions Evaluated:** [Count]
+* **Correct Answers (නිවැරදි පිළිතුරු):** [Count]
+* **Incorrect / Unanswered (වැරදි / නොසපයන ලද):** [Count]
+* **Final Score (ලබාගත් මුළු ලකුණු):** [Score] / {max_marks}
+
+---
+
+### 📝 Detailed Question Breakdown (ප්‍රශ්න පත්‍ර පරික්ෂාව)
+Create a neat Markdown Table with the following columns:
+| Q.No (ප්‍රශ්න අංකය) | Student Answer (සිසුවාගේ පිළිතුර) | Correct Answer (නිවැරදි පිළිතුර) | Status (තත්ත්වය) | Marks (ලකුණු) |
+
+Rules for table rows:
+- Status should be "✅ Correct" or "❌ Incorrect".
+- Highlight any ambiguous/double answers clearly.
+
+---
+
+### 💡 Performance Analysis & Feedback (විශ්ලේෂණය සහ උපදෙස්)
+- Provide brief constructive advice in Sinhala & English for topics/questions the student missed.
+"""
+                    else:
+                        prompt = f"""
+Evaluate this student essay/structured answer sheet against the provided marking scheme. 
+Total Maximum Marks: {max_marks}
+
+Provide:
+1. Question-by-question breakdown.
+2. Step marks & final score.
+3. Detailed feedback in Sinhala & English.
+"""
+
                     if scheme_file:
                         contents.append(Image.open(scheme_file))
-                        prompt += "Attached is the marking scheme image.\n"
+                        prompt += "\nAttached Image 1: Correct Marking Scheme / Key Answer Sheet.\n"
                     if scheme_text:
-                        prompt += f"Marking Rules: {scheme_text}\n"
+                        prompt += f"\nMarking Scheme Rules / Key Answers:\n{scheme_text}\n"
 
-                    # Adding Student Answer Sheet
                     student_img = Image.open(student_file)
                     contents.append(student_img)
+                    prompt += "\nAttached Image 2: Student Answer Sheet to be evaluated.\n"
 
-                    prompt += "Provide question-by-question breakdown, total score, and detailed Sinhala/English feedback."
                     contents.append(prompt)
 
-                    # Generating response using automatic model fallback
                     response = generate_content_with_fallback(client, contents)
 
-                    # Store result persistently
                     st.session_state.evaluation_result = response.text
 
-                    # Deduct credit
                     deduct_credit(user_id, credits)
                     st.rerun()
 
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
 
-    # Display evaluation result persistently
     if st.session_state.evaluation_result:
         st.markdown("---")
         st.success("Paper Evaluation Completed!")
