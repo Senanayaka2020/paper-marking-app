@@ -3,6 +3,7 @@ import streamlit as st
 import google.genai as genai
 import urllib.parse
 from PIL import Image
+from pypdf import PdfReader
 from supabase import create_client, Client
 
 st.set_page_config(page_title="AI Paper Marker Pro & MCQ Evaluator", page_icon="📝", layout="wide")
@@ -35,6 +36,20 @@ def get_user_credits(user_id):
 
 def deduct_credit(user_id, current_credits):
     supabase.table("profiles").update({"credits": current_credits - 1}).eq("id", user_id).execute()
+
+# --- HELPER FUNCTION TO EXTRACT TEXT FROM PDF ---
+def extract_text_from_pdf(pdf_file):
+    try:
+        reader = PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n"
+        return text
+    except Exception as e:
+        st.error(f"PDF කියවීමේ දෝෂයක්: {str(e)}")
+        return ""
 
 # --- FALLBACK GEMINI GENERATION FUNCTION ---
 def generate_content_with_fallback(client, contents):
@@ -128,9 +143,16 @@ else:
 
     with col1:
         st.subheader("1. Marking Scheme / Key Answers")
-        scheme_file = st.file_uploader("Upload Marking Scheme Image", type=["jpg", "jpeg", "png"], key="scheme")
+        scheme_file = st.file_uploader("Upload Marking Scheme (Image or PDF)", type=["jpg", "jpeg", "png", "pdf"], key="scheme")
+        
+        pdf_extracted_text = ""
         if scheme_file:
-            st.image(scheme_file, use_container_width=True)
+            if scheme_file.type == "application/pdf":
+                st.success("📄 PDF Marking Scheme Loaded Successfully!")
+                pdf_extracted_text = extract_text_from_pdf(scheme_file)
+            else:
+                st.image(scheme_file, use_container_width=True)
+
         scheme_text = st.text_area(
             "Or Type Correct Answers (e.g., 1-2, 2-4, 3-1 or 1-A, 2-C)", 
             height=120, 
@@ -153,7 +175,7 @@ else:
         if credits <= 0:
             st.error("⚠️ ඔබගේ Credits ඉවර වී ඇත. කරුණාකර Sidebar එකෙන් Credits Buy කරන්න.")
         elif not scheme_file and not scheme_text:
-            st.warning("කරුණාකර Marking Scheme එක ඇතුළත් කරන්න (Photo එකක් Upload කරන්න හෝ Text ලියන්න).")
+            st.warning("කරුණාකර Marking Scheme එක ඇතුළත් කරන්න (Photo/PDF Upload කරන්න හෝ Text ලියන්න).")
         elif not student_file:
             st.warning("කරුණාකර ශිෂ්‍ය පිළිතුරු පත්‍රයේ Photo එකක් Upload කරන්න.")
         else:
@@ -206,12 +228,18 @@ Provide:
 3. Detailed feedback in Sinhala & English.
 """
 
+                    # 1. Attach Marking Scheme to contents
                     if scheme_file:
-                        contents.append(Image.open(scheme_file))
-                        prompt += "\nAttached Image 1: Correct Marking Scheme / Key Answer Sheet.\n"
-                    if scheme_text:
-                        prompt += f"\nMarking Scheme Rules / Key Answers:\n{scheme_text}\n"
+                        if scheme_file.type == "application/pdf":
+                            prompt += f"\nCorrect Marking Scheme Extracted from PDF:\n{pdf_extracted_text}\n"
+                        else:
+                            contents.append(Image.open(scheme_file))
+                            prompt += "\nAttached Image 1: Correct Marking Scheme / Key Answer Sheet.\n"
 
+                    if scheme_text:
+                        prompt += f"\nAdditional Marking Scheme Rules / Key Answers:\n{scheme_text}\n"
+
+                    # 2. Attach Student Answer Sheet
                     student_img = Image.open(student_file)
                     contents.append(student_img)
                     prompt += "\nAttached Image 2: Student Answer Sheet to be evaluated.\n"
