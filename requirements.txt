@@ -2,3 +2,4 @@ google-genai
 streamlit
 pillow
 pypdf
+supabase
