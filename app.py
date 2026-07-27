@@ -18,9 +18,12 @@ if not SUPABASE_URL or not SUPABASE_KEY or not GEMINI_API_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 2. Authentication UI Session Management
+# Initialize Session States
 if "user" not in st.session_state:
     st.session_state.user = None
+
+if "evaluation_result" not in st.session_state:
+    st.session_state.evaluation_result = None
 
 def get_user_credits(user_id):
     try:
@@ -53,6 +56,7 @@ if not st.session_state.user:
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                 st.session_state.user = res.user
+                st.session_state.evaluation_result = None
                 st.rerun()
             except Exception as e:
                 st.sidebar.error("Login අසාර්ථකයි. Email/Password පරීක්ෂා කරන්න.")
@@ -76,6 +80,7 @@ else:
 
     if st.sidebar.button("Logout"):
         st.session_state.user = None
+        st.session_state.evaluation_result = None
         st.rerun()
 
 # --- MAIN APPLICATION ---
@@ -133,13 +138,19 @@ else:
                         contents=contents
                     )
 
-                    # Deduct 1 credit upon success
-                    deduct_credit(user_id, credits)
+                    # Store result in session state so it doesn't vanish on rerun
+                    st.session_state.evaluation_result = response.text
 
-                    st.success("Paper Evaluation Completed!")
-                    st.markdown("### 📊 Evaluation Result & Feedback")
-                    st.markdown(response.text)
+                    # Deduct credit
+                    deduct_credit(user_id, credits)
                     st.rerun()
 
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
+
+    # Display evaluation result persistently
+    if st.session_state.evaluation_result:
+        st.markdown("---")
+        st.success("Paper Evaluation Completed!")
+        st.markdown("### 📊 Evaluation Result & Feedback")
+        st.markdown(st.session_state.evaluation_result)
