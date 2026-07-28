@@ -43,10 +43,10 @@ def extract_text_from_pdf(pdf_file):
     try:
         reader = PdfReader(pdf_file)
         text = ""
-        for page in reader.pages:
+        for i, page in enumerate(reader.pages):
             extracted = page.extract_text()
             if extracted:
-                text += extracted + "\n"
+                text += f"\n--- Page {i+1} ---\n" + extracted
         return text
     except Exception as e:
         st.error(f"PDF කියවීමේ දෝෂයක්: {str(e)}")
@@ -56,13 +56,12 @@ def extract_text_from_pdf(pdf_file):
 def generate_content_with_fallback(client, contents):
     """
     Uses only verified working model identifiers for google-genai SDK.
-    Retries automatically if the server experiences temporary 503 overload.
+    Retries automatically if the server experiences temporary 503 overload or 429 rate limit.
     """
     valid_models = ['gemini-2.5-flash', 'gemini-2.0-flash']
     last_exception = None
 
     for model_name in valid_models:
-        # Try up to 2 times per model with delay for temporary 503 errors
         for attempt in range(2):
             try:
                 response = client.models.generate_content(
@@ -72,7 +71,7 @@ def generate_content_with_fallback(client, contents):
                 return response
             except Exception as e:
                 last_exception = e
-                time.sleep(2)  # Wait 2 seconds before retrying
+                time.sleep(3)  # Wait 3 seconds before retrying
                 continue
     
     raise last_exception
@@ -113,7 +112,7 @@ else:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("💳 Buy More Credits")
-    st.sidebar.write("රු. 1,000/= (Credits 1000)")
+    st.sidebar.write("රු. 1,000/= (Credits 100)")
     
     PAYHERE_MERCHANT_ID = st.secrets.get("PAYHERE_MERCHANT_ID", "123456")
     payhere_url = f"https://www.payhere.lk/pay/checkout?merchant_id={PAYHERE_MERCHANT_ID}&items=Paper+Marking+100+Credits&amount=1000&currency=LKR&custom_1={user_id}"
@@ -153,11 +152,11 @@ else:
         st.subheader("1. Marking Scheme / Key Answers")
         scheme_file = st.file_uploader("Upload Marking Scheme (Image or PDF)", type=["jpg", "jpeg", "png", "pdf"], key="scheme")
         
-        pdf_extracted_text = ""
+        pdf_scheme_text = ""
         if scheme_file:
             if scheme_file.type == "application/pdf":
                 st.success("📄 PDF Marking Scheme Loaded Successfully!")
-                pdf_extracted_text = extract_text_from_pdf(scheme_file)
+                pdf_scheme_text = extract_text_from_pdf(scheme_file)
             else:
                 st.image(scheme_file, use_container_width=True)
 
@@ -169,9 +168,15 @@ else:
 
     with col2:
         st.subheader("2. Student Answer Sheet")
-        student_file = st.file_uploader("Upload Student Answer Sheet (Image / OMR)", type=["jpg", "jpeg", "png"], key="student")
+        student_file = st.file_uploader("Upload Student Answer Sheet (Image or PDF)", type=["jpg", "jpeg", "png", "pdf"], key="student")
+        
+        pdf_student_text = ""
         if student_file:
-            st.image(student_file, use_container_width=True)
+            if student_file.type == "application/pdf":
+                st.success("📄 PDF Student Answer Sheet Loaded Successfully!")
+                pdf_student_text = extract_text_from_pdf(student_file)
+            else:
+                st.image(student_file, use_container_width=True)
 
     col_marks, col_per = st.columns(2)
     with col_marks:
@@ -185,7 +190,7 @@ else:
         elif not scheme_file and not scheme_text:
             st.warning("කරුණාකර Marking Scheme එක ඇතුළත් කරන්න (Photo/PDF Upload කරන්න හෝ Text ලියන්න).")
         elif not student_file:
-            st.warning("කරුණාකර ශිෂ්‍ය පිළිතුරු පත්‍රයේ Photo එකක් Upload කරන්න.")
+            st.warning("කරුණාකර ශිෂ්‍ය පිළිතුරු පත්‍රය Upload කරන්න (Photo/PDF).")
         else:
             with st.spinner("AI Vision Model එක මගින් පිළිතුරු පත්‍රය පරීක්ෂා කරමින් පවතී..."):
                 try:
@@ -194,7 +199,7 @@ else:
                     if paper_type.startswith("MCQ"):
                         prompt = f"""
 You are an expert Vision AI OMR and MCQ Answer Sheet Evaluator.
-Perform a high-precision spatial and visual inspection of the uploaded student sheet against the correct answer scheme.
+Perform a high-precision inspection of the uploaded student answer sheet against the correct marking scheme.
 
 Evaluation Directives:
 1. Extract and identify every question number on the student sheet and read the selected/marked answer (e.g., option 1, 2, 3, 4, 5 OR A, B, C, D, E or marked bubbles/crosses/circles/handwritten numbers).
@@ -239,7 +244,7 @@ Provide:
                     # 1. Attach Marking Scheme
                     if scheme_file:
                         if scheme_file.type == "application/pdf":
-                            prompt += f"\nCorrect Marking Scheme Extracted from PDF:\n{pdf_extracted_text}\n"
+                            prompt += f"\nCorrect Marking Scheme Extracted from PDF:\n{pdf_scheme_text}\n"
                         else:
                             contents.append(Image.open(scheme_file))
                             prompt += "\nAttached Image 1: Correct Marking Scheme / Key Answer Sheet.\n"
@@ -248,9 +253,12 @@ Provide:
                         prompt += f"\nAdditional Marking Scheme Rules / Key Answers:\n{scheme_text}\n"
 
                     # 2. Attach Student Answer Sheet
-                    student_img = Image.open(student_file)
-                    contents.append(student_img)
-                    prompt += "\nAttached Image 2: Student Answer Sheet to be evaluated.\n"
+                    if student_file.type == "application/pdf":
+                        prompt += f"\nStudent Answer Sheet Extracted Content from PDF:\n{pdf_student_text}\n"
+                    else:
+                        student_img = Image.open(student_file)
+                        contents.append(student_img)
+                        prompt += "\nAttached Image 2: Student Answer Sheet to be evaluated.\n"
 
                     contents.append(prompt)
 
